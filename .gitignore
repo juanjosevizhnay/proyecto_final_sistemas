@@ -1,0 +1,11 @@
+output/
+images/
+dist/
+build/
+__pycache__/
+*.spec
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
