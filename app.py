@@ -35,6 +35,7 @@ from src.visualization import (
     show_difference_map,
     show_metrics_bar_chart,
 )
+from src.video import process_video, get_video_info, read_first_frame
 
 # ---------------------------------------------------------------------------
 #  Tema y colores
@@ -73,6 +74,10 @@ class App(ctk.CTk):
         self.metrics = None
         self.ocr_results = None
         self.image_path = None
+
+        self.video_path = None
+        self.video_info = None
+        self.video_results = None
 
         self._build_layout()
 
@@ -139,6 +144,52 @@ class App(ctk.CTk):
             text_color=TEXT_SECONDARY
         )
         self.lbl_img_info.pack(padx=12, pady=(0, 8))
+
+        # -- Video ---------------------------------------------------------
+        self._section_label(sidebar, "VIDEO")
+
+        self.btn_load_video = ctk.CTkButton(
+            sidebar, text="Cargar Video", command=self._load_video,
+            fg_color=BG_CARD, hover_color="#1e1e30",
+            border_width=1, border_color=ACCENT,
+            text_color=ACCENT, height=34
+        )
+        self.btn_load_video.pack(padx=12, pady=(0, 6), fill="x")
+
+        self.video_preview_frame = ctk.CTkFrame(
+            sidebar, height=120, fg_color=BG_CARD, corner_radius=8
+        )
+        self.video_preview_frame.pack(padx=12, pady=(0, 4), fill="x")
+        self.video_preview_frame.pack_propagate(False)
+
+        self.lbl_video_preview = ctk.CTkLabel(
+            self.video_preview_frame, text="Sin video",
+            text_color=TEXT_MUTED, font=ctk.CTkFont(size=11)
+        )
+        self.lbl_video_preview.pack(expand=True)
+
+        self.lbl_video_info = ctk.CTkLabel(
+            sidebar, text="", font=ctk.CTkFont(size=10),
+            text_color=TEXT_SECONDARY, justify="left"
+        )
+        self.lbl_video_info.pack(padx=12, pady=(0, 4))
+
+        ctk.CTkLabel(sidebar, text="Frame step (1 = todos)",
+                     text_color=TEXT_SECONDARY,
+                     font=ctk.CTkFont(size=11)).pack(padx=14, anchor="w")
+        self.lbl_frame_step = ctk.CTkLabel(
+            sidebar, text="Frames procesados: 1/3",
+            text_color=TEXT_SECONDARY, font=ctk.CTkFont(size=10)
+        )
+        self.slider_frame_step = ctk.CTkSlider(
+            sidebar, from_=1, to=10, number_of_steps=9,
+            command=self._on_frame_step_change,
+            button_color=ACCENT, button_hover_color=ACCENT_HOVER,
+            progress_color=ACCENT
+        )
+        self.slider_frame_step.set(3)
+        self.slider_frame_step.pack(padx=12, pady=(0, 2), fill="x")
+        self.lbl_frame_step.pack(padx=14, pady=(0, 8), anchor="w")
 
         # -- Degradacion ---------------------------------------------------
         self._section_label(sidebar, "DEGRADACION")
@@ -257,11 +308,21 @@ class App(ctk.CTk):
 
         # -- Boton procesar ------------------------------------------------
         self.btn_run = ctk.CTkButton(
-            sidebar, text="PROCESAR", command=self._run_pipeline,
+            sidebar, text="PROCESAR IMAGEN", command=self._run_pipeline,
             fg_color=ACCENT, hover_color=ACCENT_HOVER,
-            height=42, font=ctk.CTkFont(size=14, weight="bold")
+            height=42, font=ctk.CTkFont(size=13, weight="bold")
         )
         self.btn_run.pack(padx=12, pady=(4, 4), fill="x")
+
+        self.btn_run_video = ctk.CTkButton(
+            sidebar, text="PROCESAR VIDEO", command=self._run_video_pipeline,
+            fg_color=BG_CARD, hover_color="#1e1e30",
+            border_width=2, border_color=ACCENT,
+            text_color=ACCENT,
+            height=42, font=ctk.CTkFont(size=13, weight="bold"),
+            state="disabled"
+        )
+        self.btn_run_video.pack(padx=12, pady=(0, 4), fill="x")
 
         self.progress = ctk.CTkProgressBar(
             sidebar, progress_color=ACCENT, height=6
@@ -302,9 +363,10 @@ class App(ctk.CTk):
         self.tab_metrics = self.tabs.add("Metricas")
         self.tab_ocr = self.tabs.add("OCR")
         self.tab_spectrum = self.tabs.add("Espectro")
+        self.tab_video = self.tabs.add("Video")
 
         for tab in (self.tab_results, self.tab_methods, self.tab_metrics,
-                    self.tab_ocr, self.tab_spectrum):
+                    self.tab_ocr, self.tab_spectrum, self.tab_video):
             tab.grid_columnconfigure(0, weight=1)
             tab.grid_rowconfigure(0, weight=1)
 
@@ -315,6 +377,7 @@ class App(ctk.CTk):
             (self.tab_metrics, "Metricas de calidad de imagen"),
             (self.tab_ocr, "Resultados de reconocimiento OCR"),
             (self.tab_spectrum, "Espectros de frecuencia"),
+            (self.tab_video, "Carga un video y presiona PROCESAR VIDEO para detectar placas"),
         ]:
             lbl = ctk.CTkLabel(tab, text=text, text_color=TEXT_MUTED,
                                font=ctk.CTkFont(size=13))
@@ -348,6 +411,10 @@ class App(ctk.CTk):
 
     def _on_rl_change(self, val):
         self.lbl_rl_iter.configure(text=f"R-L Iteraciones: {int(val)}")
+
+    def _on_frame_step_change(self, val):
+        v = int(val)
+        self.lbl_frame_step.configure(text=f"Frames procesados: 1/{v}")
 
     def _set_status(self, text, color=TEXT_MUTED):
         self.lbl_status.configure(text=text, text_color=color)
@@ -801,6 +868,300 @@ class App(ctk.CTk):
         fig2 = show_frequency_spectrum(self.degraded, 'Degradada',
                                        return_fig=True)
         self._embed_figure(frame_deg, fig2)
+
+    # ======================================================================
+    #  Load video
+    # ======================================================================
+    def _load_video(self):
+        path = filedialog.askopenfilename(
+            title="Seleccionar video",
+            filetypes=[
+                ("Videos", "*.mp4 *.avi *.mov *.mkv *.webm *.m4v"),
+                ("Todos", "*.*")
+            ]
+        )
+        if not path:
+            return
+
+        try:
+            info = get_video_info(path)
+            first_frame = read_first_frame(path)
+        except Exception as e:
+            self._set_status(f"Error: {e}", DANGER)
+            return
+
+        self.video_path = path
+        self.video_info = info
+
+        ctk_img = self._np_to_ctk_image(first_frame, size=(256, 120))
+        self.lbl_video_preview.configure(image=ctk_img, text="")
+        self.lbl_video_preview._ctk_image = ctk_img
+
+        name = os.path.basename(path)
+        self.lbl_video_info.configure(
+            text=(f"{name}\n"
+                  f"{info['width']}x{info['height']}  "
+                  f"|  {info['fps']:.0f}fps  "
+                  f"|  {info['duration']:.1f}s  "
+                  f"|  {info['frame_count']} frames")
+        )
+
+        self.btn_run_video.configure(state="normal")
+        self._set_status("Video cargado", SUCCESS)
+
+    # ======================================================================
+    #  Run video pipeline
+    # ======================================================================
+    def _run_video_pipeline(self):
+        if self.video_path is None:
+            self._set_status("Carga un video primero", DANGER)
+            return
+
+        self.btn_run.configure(state="disabled")
+        self.btn_run_video.configure(state="disabled")
+        self.btn_export.configure(state="disabled")
+        self._set_status("Procesando video...", ACCENT)
+        self._set_progress(0)
+
+        thread = threading.Thread(target=self._video_worker, daemon=True)
+        thread.start()
+
+    def _video_worker(self):
+        try:
+            self._video_pipeline_logic()
+        except Exception as e:
+            msg = str(e)
+            print("\n" + "=" * 60)
+            print("ERROR EN EL PIPELINE DE VIDEO:")
+            print(traceback.format_exc())
+            print("=" * 60)
+            self.after(0, lambda m=msg: self._set_status(f"Error: {m}", DANGER))
+        finally:
+            self.after(0, lambda: self.btn_run.configure(state="normal"))
+            self.after(0, lambda: self.btn_run_video.configure(state="normal"))
+
+    def _video_pipeline_logic(self):
+        pipeline_start = time.time()
+
+        blur_type = self.var_blur.get()
+        sigma = self.slider_sigma.get()
+        ksize = int(self.slider_ksize.get())
+        if ksize % 2 == 0:
+            ksize += 1
+        wiener_k = self.slider_wiener.get()
+        frame_step = int(self.slider_frame_step.get())
+
+        if blur_type == 'gaussian':
+            self.kernel = gaussian_kernel(ksize, sigma)
+        else:
+            self.kernel = motion_blur_kernel(ksize, 0.0)
+
+        print("\n" + "=" * 60)
+        print("  INICIO DEL PIPELINE DE VIDEO")
+        print("=" * 60)
+        print(f"  Video: {self.video_path}")
+        print(f"  Kernel: {blur_type} sigma={sigma:.1f} size={ksize}")
+        print(f"  Wiener K: {wiener_k:.3f}")
+        print(f"  Frame step: {frame_step}")
+        print("-" * 60)
+
+        video_name = os.path.splitext(
+            os.path.basename(self.video_path))[0]
+        out_dir = os.path.join(os.path.dirname(__file__), 'output',
+                               f'video_{video_name}')
+
+        def on_progress(p):
+            self.after(0, lambda val=p: self._set_progress(val))
+
+        def on_status(msg):
+            print(f"  [video] {msg}")
+            self.after(0, lambda m=msg: self._set_status(m, ACCENT))
+
+        self.video_results = process_video(
+            self.video_path, self.kernel, out_dir,
+            frame_step=frame_step,
+            wiener_k=wiener_k,
+            progress_callback=on_progress,
+            status_callback=on_status,
+        )
+
+        total = time.time() - pipeline_start
+        print("\n" + "=" * 60)
+        print(f"  PIPELINE DE VIDEO COMPLETADO en {total:.2f}s")
+        print(f"  Placas unicas: {len(self.video_results['plates'])}")
+        print(f"  Resultados guardados en: {out_dir}")
+        print("=" * 60 + "\n")
+
+        for p in self.video_results['plates']:
+            print(f"  Placa #{p['id']}: '{p['original_text']}' "
+                  f"({p['original_confidence']:.1f}%)  -->  "
+                  f"'{p['text']}' ({p['confidence']:.1f}%)  "
+                  f"@ frame {p['frame']} (t={p['timestamp']:.2f}s, "
+                  f"x{p['detections_count']})")
+
+        self.after(0, lambda: self._set_progress(1.0))
+        self.after(0, self._display_video_tab)
+
+    # ======================================================================
+    #  Display video tab
+    # ======================================================================
+    def _display_video_tab(self):
+        self._set_status(
+            f"Completado: {len(self.video_results['plates'])} placas",
+            SUCCESS
+        )
+
+        tab = self.tab_video
+        for child in tab.winfo_children():
+            child.destroy()
+
+        tab.grid_rowconfigure(0, weight=0)
+        tab.grid_rowconfigure(1, weight=1)
+
+        results = self.video_results
+        plates = results['plates']
+
+        # --- Summary card -------------------------------------------------
+        summary = ctk.CTkFrame(tab, fg_color=BG_CARD, corner_radius=10)
+        summary.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
+        summary.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        info_pairs = [
+            ("VIDEO", os.path.basename(results['video_path'])),
+            ("DURACION", f"{results['duration']:.1f}s @ "
+                          f"{results['fps']:.0f}fps"),
+            ("FRAMES ANALIZADOS",
+             f"{results['analyzed_frames']} / {results['total_frames']}"),
+            ("PLACAS UNICAS", f"{len(plates)}"),
+        ]
+        for col, (label, value) in enumerate(info_pairs):
+            ctk.CTkLabel(
+                summary, text=label,
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color=ACCENT
+            ).grid(row=0, column=col, padx=12, pady=(10, 0), sticky="w")
+            ctk.CTkLabel(
+                summary, text=value,
+                font=ctk.CTkFont(size=12),
+                text_color=TEXT_PRIMARY
+            ).grid(row=1, column=col, padx=12, pady=(0, 10), sticky="w")
+
+        # --- Grid of plates -----------------------------------------------
+        if not plates:
+            empty = ctk.CTkLabel(
+                tab,
+                text=("No se detectaron placas en el video.\n"
+                      "Revisa la consola y prueba con otro video, "
+                      "menor 'frame step' o mejor iluminacion."),
+                text_color=TEXT_MUTED,
+                font=ctk.CTkFont(size=13)
+            )
+            empty.grid(row=1, column=0, pady=40)
+            return
+
+        scroll = ctk.CTkScrollableFrame(tab, fg_color=BG_DARK)
+        scroll.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
+        scroll.grid_columnconfigure((0, 1), weight=1)
+
+        for idx, plate in enumerate(plates):
+            row, col = divmod(idx, 2)
+            card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=10)
+            card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
+
+            # Header: ID + texto
+            header = ctk.CTkFrame(card, fg_color="transparent")
+            header.pack(fill="x", padx=12, pady=(10, 4))
+
+            ctk.CTkLabel(
+                header, text=f"#{plate['id']}",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=ACCENT
+            ).pack(side="left")
+
+            ctk.CTkLabel(
+                header,
+                text=f"  t = {plate['timestamp']:.2f}s   "
+                     f"({plate['detections_count']} apariciones)",
+                font=ctk.CTkFont(size=10),
+                text_color=TEXT_MUTED
+            ).pack(side="left")
+
+            # Crops side by side
+            imgs_row = ctk.CTkFrame(card, fg_color="transparent")
+            imgs_row.pack(padx=10, pady=4, fill="x")
+            imgs_row.grid_columnconfigure((0, 1), weight=1)
+
+            # Tamano objetivo manteniendo aspect ratio aproximado
+            crop_size = self._compute_display_size(plate['crop'], 220, 90)
+            rest_size = self._compute_display_size(plate['restored'], 220, 90)
+
+            col_orig = ctk.CTkFrame(imgs_row, fg_color=BG_DARK,
+                                     corner_radius=6)
+            col_orig.grid(row=0, column=0, padx=4, pady=2, sticky="nsew")
+            ctk.CTkLabel(
+                col_orig, text="ANTES",
+                font=ctk.CTkFont(size=9, weight="bold"),
+                text_color=DANGER
+            ).pack(pady=(4, 2))
+            orig_img = self._np_to_ctk_image(plate['crop'], size=crop_size)
+            lbl_o = ctk.CTkLabel(col_orig, image=orig_img, text="")
+            lbl_o._ctk_image = orig_img
+            lbl_o.pack(padx=4, pady=(0, 4))
+
+            col_rest = ctk.CTkFrame(imgs_row, fg_color=BG_DARK,
+                                     corner_radius=6)
+            col_rest.grid(row=0, column=1, padx=4, pady=2, sticky="nsew")
+            ctk.CTkLabel(
+                col_rest, text="DESPUES",
+                font=ctk.CTkFont(size=9, weight="bold"),
+                text_color=SUCCESS
+            ).pack(pady=(4, 2))
+            rest_img = self._np_to_ctk_image(plate['restored'], size=rest_size)
+            lbl_r = ctk.CTkLabel(col_rest, image=rest_img, text="")
+            lbl_r._ctk_image = rest_img
+            lbl_r.pack(padx=4, pady=(0, 4))
+
+            # OCR comparison
+            ocr_row = ctk.CTkFrame(card, fg_color="transparent")
+            ocr_row.pack(fill="x", padx=12, pady=(4, 4))
+
+            ctk.CTkLabel(
+                ocr_row,
+                text=(f"OCR original:  '{plate['original_text']}'   "
+                      f"({plate['original_confidence']:.1f}%)"),
+                font=ctk.CTkFont(size=11),
+                text_color=DANGER,
+                anchor="w"
+            ).pack(fill="x")
+
+            ctk.CTkLabel(
+                ocr_row,
+                text=(f"OCR restaurada: '{plate['text']}'   "
+                      f"({plate['confidence']:.1f}%)"),
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=SUCCESS,
+                anchor="w"
+            ).pack(fill="x", pady=(0, 8))
+
+        # Output dir banner
+        out_label = ctk.CTkLabel(
+            tab,
+            text=f"Resultados guardados en: {results['output_dir']}",
+            text_color=TEXT_MUTED,
+            font=ctk.CTkFont(size=10)
+        )
+        out_label.grid(row=2, column=0, pady=(0, 6))
+
+    def _compute_display_size(self, image: np.ndarray,
+                              max_w: int, max_h: int) -> tuple:
+        """Calcula un tamano de display que mantiene el aspect ratio."""
+        h, w = image.shape[:2]
+        if h == 0 or w == 0:
+            return (max_w, max_h)
+        scale = min(max_w / w, max_h / h)
+        new_w = max(20, int(w * scale))
+        new_h = max(20, int(h * scale))
+        return (new_w, new_h)
 
     # ======================================================================
     #  Export

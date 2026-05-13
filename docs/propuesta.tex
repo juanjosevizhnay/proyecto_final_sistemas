@@ -1,0 +1,359 @@
+\documentclass[11pt,a4paper]{article}
+
+% --- Paquetes ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+% --- Configuracion de pagina ---
+\geometry{left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+
+% --- Colores ---
+\definecolor{azulprofundo}{RGB}{30, 58, 138}
+\definecolor{azulclaro}{RGB}{59, 130, 246}
+\definecolor{grisclaro}{RGB}{240, 240, 245}
+
+% --- Hyperref ---
+\hypersetup{
+    colorlinks=true,
+    linkcolor=azulprofundo,
+    urlcolor=azulclaro,
+    citecolor=azulprofundo
+}
+
+% --- Titulos de seccion ---
+\titleformat{\section}{\Large\bfseries\color{azulprofundo}}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries\color{azulclaro}}{\thesubsection}{1em}{}
+
+% --- Header/Footer ---
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\small Sistemas Lineales y Senales}
+\lhead{\small Restauracion de Placas Vehiculares}
+\cfoot{\thepage}
+
+% --- Codigo ---
+\lstset{
+    basicstyle=\ttfamily\small,
+    backgroundcolor=\color{grisclaro},
+    frame=single,
+    framesep=6pt,
+    rulecolor=\color{gray!30},
+    breaklines=true,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    keywordstyle=\color{azulprofundo}\bfseries,
+    commentstyle=\color{green!50!black},
+    stringstyle=\color{red!70!black},
+    showstringspaces=false,
+    tabsize=4
+}
+
+% =========================================================
+\begin{document}
+
+% --- Portada ---
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+
+    {\LARGE\bfseries\color{azulprofundo} Restauracion de Imagenes \\[0.3em]
+    de Placas Vehiculares}\\[0.8em]
+    {\Large mediante Convolucion y Deconvolucion}\\[2.5cm]
+
+    {\large\textit{Propuesta de Proyecto Final}}\\[0.5em]
+    {\large\textbf{Sistemas Lineales y Senales}}\\[3cm]
+
+    \rule{0.6\textwidth}{0.5pt}\\[0.8em]
+    {\large Aplicacion de sistemas LTI al procesamiento de imagenes}\\
+    \rule{0.6\textwidth}{0.5pt}\\[3cm]
+
+    \begin{tabular}{rl}
+        \textbf{Realizado por:} & \rule{6cm}{0.4pt} \\
+        \textbf{Docente:}       & \rule{6cm}{0.4pt} \\
+        \textbf{Fecha:}         & \today \\
+    \end{tabular}
+
+    \vfill
+\end{titlepage}
+
+% =========================================================
+\section{Resumen}
+
+Se propone desarrollar un sistema computacional que demuestre, de forma matematica y practica, como la degradacion de imagenes capturadas por camaras de transito puede modelarse como un \textbf{sistema lineal e invariante en el tiempo} (LTI) mediante la operacion de \textbf{convolucion 2D}, y como dicha degradacion puede revertirse parcialmente mediante tecnicas de \textbf{deconvolucion}.
+
+El proyecto tendra como caso de estudio la restauracion de \textbf{placas vehiculares}, con aplicacion directa en control de transito, peajes automaticos, radares y sistemas de videovigilancia.
+
+% =========================================================
+\section{Planteamiento del Problema}
+
+Las camaras de transito, radares y sistemas de vigilancia frecuentemente capturan imagenes de placas vehiculares en condiciones adversas: movimiento del vehiculo, desenfoque optico, condiciones de baja luz o ruido del sensor. Estas degradaciones comprometen la legibilidad de la placa y afectan directamente la precision de los sistemas automaticos de reconocimiento (ALPR, \textit{Automatic License Plate Recognition}).
+
+Se plantea abordar este problema desde los principios fundamentales de los \textbf{sistemas lineales}: modelar la camara como un sistema LTI, caracterizarlo por su respuesta al impulso, y aplicar tecnicas matematicas de inversion para recuperar la imagen original.
+
+% =========================================================
+\section{Objetivos}
+
+\subsection{Objetivo General}
+Desarrollar un sistema de procesamiento de imagenes que modele la degradacion como convolucion e implemente metodos de deconvolucion para restaurar la legibilidad de placas vehiculares, validando los resultados mediante OCR.
+
+\subsection{Objetivos Especificos}
+\begin{enumerate}[leftmargin=*]
+    \item Implementar manualmente el operador de convolucion 2D con bucles explicitos, demostrando la aplicacion directa de la definicion matematica.
+    \item Construir kernels que modelen degradaciones realistas (desenfoque Gaussiano, desenfoque por movimiento).
+    \item Simular el proceso de degradacion combinando convolucion y ruido aditivo.
+    \item Implementar tres estrategias de deconvolucion: filtro inverso, filtro de Wiener y Richardson-Lucy iterativo.
+    \item Evaluar cuantitativamente la calidad de la restauracion mediante metricas objetivas (MSE, PSNR, SSIM).
+    \item Validar de forma practica la mejora mediante un motor OCR que lea las placas antes y despues de la restauracion.
+\end{enumerate}
+
+% =========================================================
+\section{Marco Teorico}
+
+\subsection{Sistema Lineal e Invariante en el Tiempo}
+
+Un sistema $T\{\cdot\}$ que toma una senal $f(x,y)$ y produce una senal $g(x,y)$ es \textbf{LTI} si cumple:
+
+\begin{align}
+\text{\textbf{Linealidad:}} \quad &T\{a\,f_1 + b\,f_2\} = a\,T\{f_1\} + b\,T\{f_2\} \\
+\text{\textbf{Invariancia:}} \quad &T\{f(x-x_0, y-y_0)\} = g(x-x_0, y-y_0)
+\end{align}
+
+Un sistema LTI queda completamente caracterizado por su \textbf{respuesta al impulso} $h(x,y)$, tambien conocida como PSF (\textit{Point Spread Function}):
+
+\begin{equation}
+h(x,y) = T\{\delta(x,y)\}
+\end{equation}
+
+donde $\delta(x,y)$ es la funcion delta de Dirac bidimensional.
+
+\subsection{Modelo Matematico de Degradacion}
+
+La respuesta de un sistema LTI a cualquier senal de entrada es la \textbf{convolucion} de la entrada con la respuesta al impulso. En presencia de ruido aditivo, el modelo de degradacion de la imagen es:
+
+\begin{equation}
+\boxed{\; g(x,y) = f(x,y) * h(x,y) + n(x,y) \;}
+\end{equation}
+
+donde:
+\begin{itemize}[leftmargin=*, noitemsep]
+    \item $f(x,y)$: imagen original (senal de entrada limpia)
+    \item $h(x,y)$: PSF del sistema (kernel de degradacion)
+    \item $n(x,y)$: ruido aditivo (tipicamente Gaussiano, $n \sim \mathcal{N}(0, \sigma^2)$)
+    \item $g(x,y)$: imagen degradada observada
+    \item $*$: operador de convolucion 2D
+\end{itemize}
+
+\subsection{Convolucion 2D Discreta}
+
+La convolucion 2D discreta entre una imagen $f[m,n]$ y un kernel $h[i,j]$ se define como:
+
+\begin{equation}
+\boxed{\; g[m,n] = \sum_{i} \sum_{j} f[m-i,\, n-j] \cdot h[i,j] \;}
+\end{equation}
+
+Esta es la piedra angular del proyecto y se implementara \textbf{manualmente con bucles explicitos}, evidenciando que cada pixel de salida es una suma ponderada de los vecinos del pixel de entrada, donde los pesos estan dados por el kernel volteado.
+
+\subsection{Dominio de la Frecuencia}
+
+Por el \textbf{Teorema de Convolucion}, la convolucion en el dominio espacial equivale a la multiplicacion punto a punto en el dominio de la frecuencia:
+
+\begin{equation}
+\mathcal{F}\{f * h\} = F(u,v) \cdot H(u,v)
+\end{equation}
+
+El modelo de degradacion en frecuencia se escribe como:
+
+\begin{equation}
+G(u,v) = F(u,v) \cdot H(u,v) + N(u,v)
+\end{equation}
+
+Esta representacion permite atacar el problema de deconvolucion mediante operaciones algebraicas sobre matrices complejas de frecuencia.
+
+\subsection{Estrategias de Deconvolucion}
+
+\subsubsection{Filtro Inverso}
+
+La solucion mas directa consiste en dividir el espectro observado por la PSF:
+
+\begin{equation}
+\hat{F}(u,v) = \frac{G(u,v)}{H(u,v)}
+\end{equation}
+
+\textbf{Limitacion:} en frecuencias donde $|H(u,v)| \to 0$, el ruido $N/H$ se amplifica catastroficamente. Se incluira con proposito \textbf{didactico} para evidenciar la necesidad de regularizacion.
+
+\subsubsection{Filtro de Wiener}
+
+Introduce un parametro de regularizacion $K$ que aproxima la relacion inversa senal-ruido:
+
+\begin{equation}
+\boxed{\; \hat{F}(u,v) = \left[ \frac{H^*(u,v)}{|H(u,v)|^2 + K} \right] \cdot G(u,v) \;}
+\end{equation}
+
+donde $H^*$ es el conjugado complejo de $H$. Sera el \textbf{metodo principal} del proyecto por su robustez y fundamento estadistico (minimiza el error cuadratico medio esperado).
+
+\subsubsection{Richardson-Lucy Iterativo}
+
+Metodo iterativo derivado de la estadistica bayesiana que preserva la positividad:
+
+\begin{equation}
+f_{k+1}(x,y) = f_k(x,y) \cdot \left[ \frac{g(x,y)}{f_k(x,y) * h(x,y)} * h^T(x,y) \right]
+\end{equation}
+
+donde $h^T$ es la PSF transpuesta (rotada 180 grados). Converge a la estimacion de maxima verosimilitud.
+
+\subsection{Metricas de Calidad Objetiva}
+
+\begin{align}
+\text{MSE} &= \frac{1}{MN} \sum_{x,y} [f(x,y) - \hat{f}(x,y)]^2 \\[0.3em]
+\text{PSNR} &= 10 \cdot \log_{10}\left( \frac{\text{MAX}^2}{\text{MSE}} \right) \quad \text{[dB]} \\[0.3em]
+\text{SSIM}(x,y) &= \frac{(2\mu_x\mu_y + C_1)(2\sigma_{xy} + C_2)}{(\mu_x^2 + \mu_y^2 + C_1)(\sigma_x^2 + \sigma_y^2 + C_2)}
+\end{align}
+
+% =========================================================
+\section{Metodologia}
+
+El proyecto se desarrollara en seis fases secuenciales:
+
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Implementacion del nucleo matematico:} convolucion 2D manual con bucles explicitos, manejo de padding y diferentes modos de contorno.
+    \item \textbf{Construccion de kernels:} Gaussiano, motion blur, Laplaciano y Sobel, todos construidos a partir de sus formulas matematicas explicitas.
+    \item \textbf{Simulacion de degradacion:} aplicacion del modelo $g = f * h + n$ con diferentes configuraciones de ruido.
+    \item \textbf{Implementacion de deconvolucion:} los tres metodos descritos, operando sobre la representacion en frecuencia obtenida via DFT.
+    \item \textbf{Evaluacion cuantitativa:} calculo de metricas MSE, PSNR y SSIM comparando cada etapa.
+    \item \textbf{Validacion practica:} ejecucion de OCR sobre la imagen original, degradada y restaurada para cuantificar la mejora en legibilidad.
+\end{enumerate}
+
+% =========================================================
+\section{Tecnologias}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Componente} & \textbf{Tecnologia} & \textbf{Proposito} \\
+\midrule
+Lenguaje & Python 3.8+ & Desarrollo principal \\
+Computo numerico & NumPy & Operaciones matriciales, FFT \\
+Procesamiento imagen & OpenCV & Carga de imagenes, CLAHE \\
+Visualizacion & Matplotlib & Graficas y espectros \\
+Interfaz grafica & CustomTkinter & GUI moderna con tema oscuro \\
+OCR & RapidOCR (ONNX Runtime) & Lectura de placas (PaddleOCR) \\
+Validacion & scikit-image & Verificacion de metricas \\
+\bottomrule
+\end{tabular}
+\caption{Tecnologias propuestas para la implementacion.}
+\end{table}
+
+\textbf{Restriccion fundamental:} las operaciones matematicas centrales (convolucion 2D y logica de deconvolucion) seran implementadas manualmente sin delegar en funciones de libreria. Las herramientas externas se usaran unicamente para:
+\begin{itemize}[leftmargin=*, noitemsep]
+    \item Entrada/salida de imagenes (OpenCV)
+    \item Calculo numerico de la DFT (NumPy FFT, un algoritmo, no una funcion de restauracion)
+    \item Visualizacion e interfaz
+    \item Validacion de metricas propias
+\end{itemize}
+
+% =========================================================
+\section{Arquitectura Propuesta}
+
+La solucion se organizara en modulos independientes bajo una carpeta \texttt{src/}:
+
+\begin{lstlisting}[language=,numbers=none]
+proyecto_sistemas/
+|-- app.py              # Interfaz grafica (CustomTkinter)
+|-- main.py             # Pipeline de consola
+|-- requirements.txt
+|-- images/             # Imagenes de prueba
+|-- output/             # Resultados generados
+`-- src/
+    |-- convolution.py   # NUCLEO: convolucion 2D manual
+    |-- kernels.py       # Kernels matematicos
+    |-- degradation.py   # Modelo g = f*h + n
+    |-- restoration.py   # Deconvolucion: Wiener, R-L, inverso
+    |-- postprocessing.py # Sharpening, CLAHE, bordes
+    |-- ocr.py           # Motor de reconocimiento
+    |-- metrics.py       # MSE, PSNR, SSIM manuales
+    `-- visualization.py
+\end{lstlisting}
+
+\subsection{Fragmento clave: convolucion manual}
+
+El corazon matematico del proyecto sera un doble bucle que implementa directamente la definicion de convolucion:
+
+\begin{lstlisting}[language=Python]
+def convolve2d_manual(image, kernel, padding='zero'):
+    # Voltear el kernel (definicion estricta de convolucion)
+    kernel_flipped = kernel[::-1, ::-1]
+
+    kH, kW = kernel_flipped.shape
+    padded = pad_image(image, kH // 2, kW // 2, mode=padding)
+
+    M, N = image.shape
+    output = np.zeros((M, N))
+
+    for m in range(M):
+        for n in range(N):
+            region = padded[m:m + kH, n:n + kW]
+            output[m, n] = np.sum(region * kernel_flipped)
+
+    return output
+\end{lstlisting}
+
+Cada pixel de salida es una suma ponderada de los vecinos del pixel de entrada, demostrando la aplicacion directa de la formula matematica.
+
+% =========================================================
+\section{Entregables Esperados}
+
+\begin{itemize}[leftmargin=*]
+    \item Codigo fuente modular, documentado con las formulas matematicas correspondientes.
+    \item Interfaz grafica que permita cargar imagenes, ajustar parametros de degradacion y restauracion, y visualizar resultados comparativos.
+    \item Visualizaciones: espectros de Fourier, mapas de diferencia, graficas comparativas, tabla de metricas y resultados OCR anotados.
+    \item Reporte de resultados cuantitativos para al menos una imagen de prueba, mostrando la mejora en PSNR, SSIM y precision del OCR.
+    \item Documentacion tecnica (README) con instrucciones de instalacion y uso.
+\end{itemize}
+
+% =========================================================
+\section{Aplicaciones Practicas}
+
+El sistema resultante sera aplicable en los siguientes dominios:
+
+\begin{itemize}[leftmargin=*, noitemsep]
+    \item Control de transito y radares automaticos de velocidad
+    \item Peajes electronicos con reconocimiento de placas
+    \item Sistemas de videovigilancia y seguridad vial
+    \item Lectura automatica de placas (ALPR) en estacionamientos
+    \item Investigacion forense en casos de imagenes deterioradas
+\end{itemize}
+
+% =========================================================
+\section{Conclusion}
+
+Este proyecto vinculara los conceptos teoricos del curso de \textit{Sistemas Lineales y Senales} con una aplicacion tangible y de valor practico. La implementacion manual de la convolucion y la deconvolucion evidenciara que los fundamentos matematicos no son abstracciones alejadas de la realidad, sino herramientas concretas que permiten resolver problemas reales en el procesamiento digital de imagenes.
+
+Se demostrara que un sistema fisico (una camara) puede modelarse como un sistema LTI, caracterizarse matematicamente, y su efecto revertirse mediante operaciones algebraicas fundamentadas en la teoria de senales.
+
+% =========================================================
+\section*{Referencias}
+\addcontentsline{toc}{section}{Referencias}
+
+\begin{itemize}[leftmargin=*, noitemsep]
+    \item Gonzalez, R.C. \& Woods, R.E. (2018). \textit{Digital Image Processing} (4th ed.). Pearson.
+    \item Oppenheim, A.V. \& Willsky, A.S. (1997). \textit{Signals and Systems} (2nd ed.). Prentice Hall.
+    \item Wang, Z., Bovik, A.C., Sheikh, H.R. \& Simoncelli, E.P. (2004). Image Quality Assessment: From Error Visibility to Structural Similarity. \textit{IEEE Transactions on Image Processing}, 13(4), 600--612.
+    \item Richardson, W.H. (1972). Bayesian-Based Iterative Method of Image Restoration. \textit{Journal of the Optical Society of America}, 62(1), 55--59.
+    \item Lucy, L.B. (1974). An Iterative Technique for the Rectification of Observed Distributions. \textit{The Astronomical Journal}, 79, 745--754.
+\end{itemize}
+
+\end{document}

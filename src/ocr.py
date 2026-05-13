@@ -100,6 +100,47 @@ def read_plate(image: np.ndarray) -> dict:
     }
 
 
+def detect_text_regions(image: np.ndarray) -> list:
+    """
+    Ejecuta el detector OCR y retorna las detecciones completas con
+    bounding boxes, util para procesamiento de video donde necesitamos
+    localizar las placas dentro del frame.
+
+    Parametros
+    ----------
+    image : ndarray (M, N), imagen en escala de grises, rango [0, 1]
+
+    Retorna
+    -------
+    detections : lista de dicts con claves:
+        'bbox'  : lista de 4 puntos [(x, y), ...] del cuadrilatero detectado
+        'text'  : texto detectado
+        'score' : confianza en rango [0, 1]
+    """
+    if not OCR_AVAILABLE or _engine is None:
+        return []
+
+    img_uint8 = (np.clip(image, 0, 1) * 255).astype(np.uint8)
+
+    try:
+        result, _elapse = _engine(img_uint8)
+    except Exception as e:
+        print(f"[OCR] Error en deteccion: {e}")
+        return []
+
+    if not result:
+        return []
+
+    detections = []
+    for bbox, text, score in result:
+        detections.append({
+            'bbox': bbox,
+            'text': text,
+            'score': float(score) if score is not None else 0.0,
+        })
+    return detections
+
+
 def character_accuracy(detected: str, ground_truth: str) -> float:
     """
     Calcula la tasa de acierto de caracteres entre el texto detectado
