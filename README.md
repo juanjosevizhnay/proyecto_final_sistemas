@@ -59,6 +59,7 @@ proyecto_sistemas/
     ├── postprocessing.py
     ├── ocr.py          # PaddleOCR via ONNX Runtime
     ├── metrics.py      # MSE, PSNR, SSIM manuales
+    ├── video.py        # Pipeline de video: detección + restauración por frames
     └── visualization.py
 ```
 
@@ -97,6 +98,44 @@ python main.py
 ```
 
 Selecciona una imagen de la carpeta `images/` y ejecuta el pipeline completo imprimiendo logs y métricas en terminal.
+
+---
+
+## Modo Video
+
+Además de imágenes, el sistema procesa videos completos para detectar y restaurar placas vehiculares a través de los frames.
+
+### Uso en la GUI
+
+1. Ejecuta `python app.py`
+2. En la sidebar, sección **VIDEO**, presiona **Cargar Video** (formatos `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`)
+3. Ajusta el slider **Frame step** (1 = analizar todos los frames, 3 = uno de cada tres)
+4. Configura el kernel y `K` de Wiener como en imagen
+5. Presiona **PROCESAR VIDEO**
+6. Los resultados aparecen en la pestaña **Video** con un grid de placas (recorte original vs restaurado + OCR antes/después)
+
+### Pipeline interno (`src/video.py`)
+
+1. **Detección por frame** — `detect_text_regions()` corre OCR sobre cada frame seleccionado, filtrando con `looks_like_plate()` (longitud alfanumérica + presencia de dígitos)
+2. **Agregación** — `aggregate_detections()` agrupa la misma placa que aparece en N frames usando `difflib.SequenceMatcher` sobre los textos normalizados
+3. **Restauración** — solo del frame con mayor confianza por grupo, aplicando **el mismo** `wiener_filter` + `postprocess_pipeline` del modo imagen
+4. **Re-OCR** — sobre la versión restaurada para medir la mejora
+
+### Archivos de salida (`output/video_<nombre>/`)
+
+| Archivo | Contenido |
+|---------|-----------|
+| `summary.txt` | Reporte legible: fps, duración, placas únicas, OCR antes/después |
+| `plates.json` | Datos estructurados de todas las placas detectadas |
+| `plate_NN_orig.png` | Recorte original de cada placa |
+| `plate_NN_restored.png` | Recorte tras Wiener + post-proceso |
+| `plate_NN_comparison.png` | Original y restaurada lado a lado |
+
+### Notas
+
+- El modo video reutiliza exactamente la misma matemática del proyecto (`g = f*h + n`), aplicada ahora a frames secuenciales
+- Solo se restaura **una vez por placa única**, no por cada frame en que aparece — mantiene el tiempo de procesamiento manejable
+- Si OCR detecta 0 placas, prueba bajar `Frame step` a 1-2 o usar un video de mayor resolución
 
 ---
 
