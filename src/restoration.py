@@ -24,16 +24,45 @@ import numpy as np
 from src.convolution import convolve2d_manual
 
 
+def _psf_to_otf(kernel: np.ndarray, shape) -> np.ndarray:
+    """
+    Convierte la PSF h(x,y) a su funcion de transferencia optica H(u,v)
+    del tamano de la imagen, CENTRANDO la PSF antes de la FFT.
+
+    Esto es indispensable: la degradacion del proyecto usa convolucion
+    espacial *centrada* (el kernel se alinea con su centro en cada pixel,
+    ver convolve2d_manual). Si aqui colocaramos la PSF anclada en la
+    esquina [0, 0], la imagen restaurada saldria desplazada (kH//2, kW//2)
+    pixeles respecto a la original, arruinando metricas y alineacion.
+
+    Por eso desplazamos circularmente la PSF para que su centro quede en
+    el origen [0, 0], que es la convencion que asume la DFT.
+    """
+    M, N = shape
+    kH, kW = kernel.shape
+    psf = np.zeros((M, N), dtype=np.float64)
+    # Si el kernel es mas grande que la imagen (p.ej. recortes pequenos de
+    # placas en video), lo recortamos para que quepa sin romper.
+    kh, kw = min(kH, M), min(kW, N)
+    psf[:kh, :kw] = kernel[:kh, :kw]
+    # Llevar el centro de la PSF (kH//2, kW//2) al origen [0, 0]
+    psf = np.roll(psf, (-(kH // 2), -(kW // 2)), axis=(0, 1))
+    return np.fft.fft2(psf)
+
+
 def _to_freq_domain(image: np.ndarray, kernel: np.ndarray):
     """
     Transforma imagen y kernel al dominio de frecuencia con el mismo
     tamano, necesario para operar punto a punto.
 
-    Retorna G, H y el shape usado para la FFT.
+    La PSF se centra con _psf_to_otf para ser consistente con la
+    convolucion espacial centrada usada en la degradacion.
+
+    Retorna G y H.
     """
     M, N = image.shape
     G = np.fft.fft2(image, s=(M, N))
-    H = np.fft.fft2(kernel, s=(M, N))
+    H = _psf_to_otf(kernel, (M, N))
     return G, H
 
 
@@ -171,7 +200,9 @@ def richardson_lucy(degraded: np.ndarray, kernel: np.ndarray,
         if use_fft:
             M, N = img.shape
             F = np.fft.fft2(img, s=(M, N))
-            K = np.fft.fft2(kern, s=(M, N))
+            # PSF centrada (misma convencion que la degradacion centrada),
+            # evita que la estimacion se desplace en cada iteracion
+            K = _psf_to_otf(kern, (M, N))
             return np.fft.ifft2(F * K).real
         else:
             return convolve2d_manual(img, kern)
