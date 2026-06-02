@@ -33,10 +33,12 @@ import json
 import cv2
 import numpy as np
 from difflib import SequenceMatcher
+from collections import Counter
 
 from src.restoration import wiener_filter
 from src.postprocessing import postprocess_pipeline
 from src.ocr import detect_text_regions, OCR_AVAILABLE
+from src.autotune import auto_restore, quick_kernel_candidates
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +168,46 @@ def aggregate_detections(detections: list,
     return groups
 
 
+def vote_plate_text(texts: list) -> str:
+    """
+    Votacion por caracter entre varias lecturas de la MISMA placa
+    (mejora de eficacia en video).
+
+    Una placa aparece en N frames; el OCR puede equivocarse en un
+    caracter distinto en cada frame (p.ej. 'ABC123', 'ABG123', 'ABC723').
+    En vez de quedarnos con una sola lectura, votamos posicion por
+    posicion y nos quedamos con el caracter mas frecuente. Esto corrige
+    errores puntuales que no se repiten entre frames.
+
+    Estrategia:
+        1. Normalizar todas las lecturas (solo A-Z0-9)
+        2. Tomar la longitud mas frecuente L (la mayoria acierta el largo)
+        3. Para cada posicion 0..L-1, elegir el caracter mas votado
+           entre las lecturas de longitud L
+
+    Retorna la placa consensuada (cadena), o '' si no hay lecturas.
+    """
+    norm = [normalize_plate(t) for t in texts]
+    norm = [t for t in norm if t]
+    if not norm:
+        return ''
+
+    # Longitud mas frecuente
+    length_votes = Counter(len(t) for t in norm)
+    target_len = length_votes.most_common(1)[0][0]
+
+    same_len = [t for t in norm if len(t) == target_len]
+    if not same_len:
+        return norm[0]
+
+    voted_chars = []
+    for i in range(target_len):
+        char_votes = Counter(t[i] for t in same_len)
+        voted_chars.append(char_votes.most_common(1)[0][0])
+
+    return ''.join(voted_chars)
+
+
 # ---------------------------------------------------------------------------
 #   PIPELINE DE VIDEO
 # ---------------------------------------------------------------------------
@@ -214,6 +256,7 @@ def process_video(video_path: str,
                   wiener_k: float = 0.01,
                   apply_postprocess: bool = True,
                   similarity_threshold: float = 0.6,
+                  auto_tune: bool = True,
                   max_frames: int = None,
                   progress_callback=None,
                   status_callback=None) -> dict:
@@ -230,6 +273,9 @@ def process_video(video_path: str,
     wiener_k             : parametro de regularizacion del filtro Wiener
     apply_postprocess    : aplicar sharpening / CLAHE / bordes tras Wiener
     similarity_threshold : umbral de similitud para agrupar detecciones
+    auto_tune            : si True, por cada placa busca el mejor kernel y
+                           el mejor K de Wiener (mejoras a + b) maximizando
+                           la confianza del OCR. Si False, usa kernel/K fijos.
     max_frames           : limite de frames a leer (None = todo el video)
     progress_callback    : funcion(fraction: float) llamada periodicamente
     status_callback      : funcion(msg: str) para reportar estado
@@ -349,34 +395,63 @@ def process_video(video_path: str,
     # ----------------------------------------------------------------------
     # FASE 3: restauracion + re-OCR solo del mejor frame de cada placa
     # ----------------------------------------------------------------------
+    kernel_candidates = quick_kernel_candidates() if auto_tune else None
+
     plates = []
     for i, grp in enumerate(groups):
         _progress(0.75 + (i / max(len(groups), 1)) * 0.20)
-        _log(f"Restaurando placa {i + 1}/{len(groups)}")
+        _log(f"Restaurando placa {i + 1}/{len(groups)}"
+             + (" (auto-ajuste)" if auto_tune else ""))
 
         best = max(grp, key=lambda d: d['confidence'])
-        restored = _restore_crop(best['crop'], kernel, wiener_k,
-                                 apply_postprocess=apply_postprocess)
+
+        if auto_tune:
+            # Mejoras (a)+(b): buscar el mejor kernel y K maximizando la
+            # confianza del OCR sobre el recorte restaurado
+            res = auto_restore(best['crop'],
+                               kernels=kernel_candidates,
+                               apply_postprocess=apply_postprocess)
+            restored = res['restored']
+            used_kernel_name = res['kernel_name']
+            used_k = res['K']
+        else:
+            restored = _restore_crop(best['crop'], kernel, wiener_k,
+                                     apply_postprocess=apply_postprocess)
+            used_kernel_name = 'fijo'
+            used_k = wiener_k
 
         # Re-ejecutar OCR sobre la version restaurada
         rest_dets = detect_text_regions(restored)
         rest_text, rest_conf = _ocr_text_from_detections(rest_dets)
 
-        # Si el OCR no encuentra nada tras restaurar, conservamos
-        # el texto original (peor caso = igual al de antes)
-        if not rest_text:
-            rest_text = best['text']
-            rest_conf = best['confidence']
+        # Mejora (d): votacion por caracter entre todas las lecturas de
+        # esta placa (las de cada frame + la de la version restaurada)
+        all_texts = [d['text'] for d in grp]
+        if rest_text:
+            all_texts.append(rest_text)
+        voted_text = vote_plate_text(all_texts)
+
+        # El texto final prioriza la votacion; si no hay, cae a la lectura
+        # restaurada y, en ultimo caso, a la original
+        final_text = voted_text or rest_text or best['text']
+
+        # La confianza reportada es la del OCR restaurado (o la original
+        # si la restauracion no produjo lectura)
+        final_conf = rest_conf if rest_text else best['confidence']
 
         plates.append({
             'id': i + 1,
-            'text': rest_text,
+            'text': final_text,
+            'voted_text': voted_text,
+            'restored_text': rest_text,
             'original_text': best['text'],
-            'confidence': rest_conf,
+            'confidence': final_conf,
             'original_confidence': best['confidence'],
             'frame': best['frame'],
             'timestamp': best['timestamp'],
             'detections_count': len(grp),
+            'kernel_used': used_kernel_name,
+            'k_used': used_k,
             'crop': best['crop'],
             'restored': restored,
             'box_xyxy': best['box_xyxy'],
@@ -449,8 +524,11 @@ def _save_results(video_path, plates, output_dir,
             f.write(f"  Apariciones     : {p['detections_count']}\n")
             f.write(f"  Antes (OCR)     : '{p['original_text']}'  "
                     f"({p['original_confidence']:.1f}%)\n")
-            f.write(f"  Despues (OCR)   : '{p['text']}'  "
+            f.write(f"  Restaurada (OCR): '{p.get('restored_text', '')}'  "
                     f"({p['confidence']:.1f}%)\n")
+            f.write(f"  Votada (final)  : '{p.get('voted_text', '')}'\n")
+            f.write(f"  Kernel/K usados : {p.get('kernel_used', '-')}  "
+                    f"K={p.get('k_used', '-')}\n")
             f.write("\n")
 
     # ---- JSON estructurado ------------------------------------------------
@@ -466,12 +544,16 @@ def _save_results(video_path, plates, output_dir,
             {
                 'id': p['id'],
                 'text': p['text'],
+                'voted_text': p.get('voted_text', ''),
+                'restored_text': p.get('restored_text', ''),
                 'original_text': p['original_text'],
                 'confidence': round(p['confidence'], 2),
                 'original_confidence': round(p['original_confidence'], 2),
                 'frame': p['frame'],
                 'timestamp': round(p['timestamp'], 3),
                 'detections_count': p['detections_count'],
+                'kernel_used': p.get('kernel_used', ''),
+                'k_used': p.get('k_used', ''),
                 'box_xyxy': list(p['box_xyxy']),
             }
             for p in plates

@@ -189,7 +189,16 @@ class App(ctk.CTk):
         )
         self.slider_frame_step.set(3)
         self.slider_frame_step.pack(padx=12, pady=(0, 2), fill="x")
-        self.lbl_frame_step.pack(padx=14, pady=(0, 8), anchor="w")
+        self.lbl_frame_step.pack(padx=14, pady=(0, 6), anchor="w")
+
+        self.var_auto_tune = ctk.BooleanVar(value=True)
+        self.chk_auto_tune = ctk.CTkCheckBox(
+            sidebar, text="Auto-ajuste (mejor kernel + K)",
+            variable=self.var_auto_tune,
+            font=ctk.CTkFont(size=11), text_color=TEXT_SECONDARY,
+            fg_color=ACCENT, hover_color=ACCENT_HOVER
+        )
+        self.chk_auto_tune.pack(padx=14, pady=(0, 8), anchor="w")
 
         # -- Degradacion ---------------------------------------------------
         self._section_label(sidebar, "DEGRADACION")
@@ -950,6 +959,7 @@ class App(ctk.CTk):
             ksize += 1
         wiener_k = self.slider_wiener.get()
         frame_step = int(self.slider_frame_step.get())
+        auto_tune = self.var_auto_tune.get()
 
         if blur_type == 'gaussian':
             self.kernel = gaussian_kernel(ksize, sigma)
@@ -963,6 +973,7 @@ class App(ctk.CTk):
         print(f"  Kernel: {blur_type} sigma={sigma:.1f} size={ksize}")
         print(f"  Wiener K: {wiener_k:.3f}")
         print(f"  Frame step: {frame_step}")
+        print(f"  Auto-ajuste: {auto_tune}")
         print("-" * 60)
 
         video_name = os.path.splitext(
@@ -981,6 +992,7 @@ class App(ctk.CTk):
             self.video_path, self.kernel, out_dir,
             frame_step=frame_step,
             wiener_k=wiener_k,
+            auto_tune=auto_tune,
             progress_callback=on_progress,
             status_callback=on_status,
         )
@@ -1136,12 +1148,24 @@ class App(ctk.CTk):
 
             ctk.CTkLabel(
                 ocr_row,
-                text=(f"OCR restaurada: '{plate['text']}'   "
+                text=(f"Placa (votada): '{plate['text']}'   "
                       f"({plate['confidence']:.1f}%)"),
                 font=ctk.CTkFont(size=11, weight="bold"),
                 text_color=SUCCESS,
                 anchor="w"
-            ).pack(fill="x", pady=(0, 8))
+            ).pack(fill="x")
+
+            kernel_used = plate.get('kernel_used', '')
+            if kernel_used and kernel_used != 'fijo':
+                ctk.CTkLabel(
+                    ocr_row,
+                    text=(f"Auto-ajuste: {kernel_used}  "
+                          f"K={plate.get('k_used', '')}"),
+                    font=ctk.CTkFont(size=9),
+                    text_color=TEXT_MUTED,
+                    anchor="w"
+                ).pack(fill="x")
+            ctk.CTkLabel(ocr_row, text="", height=2).pack()
 
         # Output dir banner
         out_label = ctk.CTkLabel(

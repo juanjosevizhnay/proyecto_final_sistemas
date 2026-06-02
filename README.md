@@ -60,6 +60,7 @@ proyecto_sistemas/
     ├── ocr.py          # PaddleOCR via ONNX Runtime
     ├── metrics.py      # MSE, PSNR, SSIM manuales
     ├── video.py        # Pipeline de video: detección + restauración por frames
+    ├── autotune.py     # Auto-ajuste de K/kernel + votación (mejoras de accuracy)
     └── visualization.py
 ```
 
@@ -131,10 +132,23 @@ Además de imágenes, el sistema procesa videos completos para detectar y restau
 | `plate_NN_restored.png` | Recorte tras Wiener + post-proceso |
 | `plate_NN_comparison.png` | Original y restaurada lado a lado |
 
+### Mejoras de eficacia (accuracy)
+
+El modo video incluye tres técnicas para subir el acierto cuando no se conoce el blur real (caso típico de cámaras de tránsito). Se activan con el checkbox **Auto-ajuste** de la sidebar (`src/autotune.py`):
+
+| Mejora | Qué hace |
+|--------|----------|
+| **(a) Barrido de K de Wiener** | Prueba varios valores de `K` (regularización) y se queda con el de mejor lectura, en vez de fijarlo a mano |
+| **(b) Búsqueda de kernel** | Genera varias PSF candidatas (Gaussiano + motion blur en distintos ángulos/longitudes) y elige la que mejor restaura — deconvolución "ciega" simplificada |
+| **(d) Votación por carácter** | Combina las lecturas OCR de la **misma placa en todos los frames** votando carácter por carácter, corrigiendo errores puntuales que no se repiten |
+
+El "mejor" resultado se mide con la **confianza del OCR** (caso real, sin imagen de referencia) o con **SSIM** cuando sí hay referencia (`auto_restore(..., reference=original)`).
+
 ### Notas
 
 - El modo video reutiliza exactamente la misma matemática del proyecto (`g = f*h + n`), aplicada ahora a frames secuenciales
 - Solo se restaura **una vez por placa única**, no por cada frame en que aparece — mantiene el tiempo de procesamiento manejable
+- Con **Auto-ajuste** activo el procesamiento es más lento (prueba varias combinaciones por placa); desactívalo para usar el kernel/K fijos de la sidebar
 - Si OCR detecta 0 placas, prueba bajar `Frame step` a 1-2 o usar un video de mayor resolución
 
 ---
